@@ -1,14 +1,15 @@
 #include <gint/display.h>
 #include <gint/keyboard.h>
+#include <gint/rtc.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include "map.h"
-#include "enemy_sprite.h"
-#include "wall_texture.h"
-#include "startscreen.h"
-#include "controlsscreen.h"
+#include "assets/enemy_sprite.h"
+#include "assets/wall_texture.h"
+#include "screens/startscreen.h"
+#include "screens/controlsscreen.h"
 
 #define SCREEN_WIDTH 396
 #define SCREEN_HEIGHT 224
@@ -181,8 +182,10 @@ void render() {
                         if (dy_lim <= 0) continue;
                         dy_lim = sqrtf(dy_lim);
                         int vh = (int)(h * dy_lim);
-                        int vs = SCREEN_HEIGHT/2 - vh/2 + horiz, ve = SCREEN_HEIGHT/2 + vh/2 + horiz;
-                        if (vs < 0) vs = 0; if (ve >= SCREEN_HEIGHT) ve = SCREEN_HEIGHT - 1;
+                        int vs = SCREEN_HEIGHT/2 - vh/2 + horiz;
+                        int ve = SCREEN_HEIGHT/2 + vh/2 + horiz;
+                        if (vs < 0) vs = 0;
+                        if (ve >= SCREEN_HEIGHT) ve = SCREEN_HEIGHT - 1;
                         color_t color = (dy_lim > 0.7f) ? C_WHITE : C_LIGHT;
                         for(int y=vs; y<=ve; y++) vram[y * SCREEN_WIDTH + x] = color;
                     } else {
@@ -220,21 +223,45 @@ void render() {
     dupdate();
 }
 
-void show_splash(const uint16_t *image) {
+unsigned int entropy_seed = 0;
+
+bool show_splash(const uint16_t *image) {
     uint16_t *vram = gint_vram;
     for(int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
         vram[i] = image[i];
     }
     dupdate();
     clearevents();
-    getkey();
+    
+    while(1) {
+        // increment seed while waiting for user input
+        entropy_seed++;
+
+        if(keydown(KEY_EXIT) || keydown(KEY_MENU)) {
+            return false;
+        }
+        if(keydown(KEY_F6)) {
+            // wait for key release to prevent double skips
+            while(keydown(KEY_F6)) { clearevents(); }
+            return true;
+        }
+        clearevents();
+    }
 }
 
 int main(void) {
-    show_splash(startscreen);
-    show_splash(controlsscreen);
+    // Initial seed with RTC as a fallback
+    srand(rtc_ticks());
 
-    // scan worldMap for enemies (marked as 3)
+    if (!show_splash(startscreen)) return 0;
+    if (!show_splash(controlsscreen)) return 0;
+
+    // Re-seed using the entropy gathered during the splash screens
+    srand(rtc_ticks() ^ entropy_seed);
+
+    generateMap();
+
+    // scan worldMap for enemies (marked as 3) and sphere (marked as 2)
     actualEnemyCount = 0;
     for(int y = 0; y < MAP_HEIGHT; y++) {
         for(int x = 0; x < MAP_WIDTH; x++) {
@@ -243,6 +270,10 @@ int main(void) {
                 enemies[actualEnemyCount].y = (float)y + 0.5f;
                 enemies[actualEnemyCount].alive = true;
                 actualEnemyCount++;
+            }
+            if(worldMap[x][y] == 2) {
+                sphereX = (float)x + 0.5f;
+                sphereY = (float)y + 0.5f;
             }
         }
     }

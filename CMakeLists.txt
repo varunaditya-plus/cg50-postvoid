@@ -6,7 +6,7 @@ list(APPEND CMAKE_MODULE_PATH "$ENV{HOME}/.local/lib/cmake/fxsdk")
 include(GenerateG3A)
 find_package(Gint 2.9 REQUIRED)
 
-add_executable(postvoid src/main.c)
+add_executable(postvoid src/main.c src/map.c)
 target_compile_options(postvoid PRIVATE -Wall -Wextra -Os)
 target_link_libraries(postvoid Gint::Gint m)
 
