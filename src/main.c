@@ -29,6 +29,7 @@ float hpDecay = 0.25f; // per frame
 float zBuffer[SCREEN_WIDTH];
 float sphereX = MAP_WIDTH - 2.5f;
 float sphereY = MAP_HEIGHT - 2.5f;
+int currentLevel = 1;
 
 typedef struct { float x, y, dx, dy; bool active; } Bullet;
 Bullet bullet = {0};
@@ -124,7 +125,7 @@ void render() {
         for(int y = y_start; y <= y_end; y++) {
             int texY = (int)texPos & (TEX_HEIGHT - 1);
             texPos += step_tex;
-            uint16_t color = wall_texture[(texY << 7) | texX];
+            uint16_t color = wall_textures[currentLevel - 1][(texY << 7) | texX];
 
             if (final_shade < 240) {
                 int r = ((color >> 11) * final_shade) >> 8;
@@ -163,17 +164,12 @@ void render() {
             for(int x = x_s; x < x_e; x++) {
                 if(x >= 0 && x < SCREEN_WIDTH && ty < zBuffer[x]) {
                     if (isSphere) {
-                        float dx = (x - screenX) / (float)(w / 2.0f);
-                        float dy_lim = 1.0f - dx * dx;
-                        if (dy_lim <= 0) continue;
-                        dy_lim = sqrtf(dy_lim);
-                        int vh = (int)(h * dy_lim);
-                        int vs = SCREEN_HEIGHT/2 - vh/2 + horiz;
-                        int ve = SCREEN_HEIGHT/2 + vh/2 + horiz;
+                        int vh = h / 2;
+                        int vs = SCREEN_HEIGHT / 2 + horiz;
+                        int ve = vs + vh;
                         if (vs < 0) vs = 0;
                         if (ve >= SCREEN_HEIGHT) ve = SCREEN_HEIGHT - 1;
-                        color_t color = (dy_lim > 0.7f) ? C_WHITE : C_LIGHT;
-                        for(int y=vs; y<=ve; y++) vram[y * SCREEN_WIDTH + x] = color;
+                        for(int y = vs; y <= ve; y++) vram[y * SCREEN_WIDTH + x] = C_WHITE;
                     } else {
                         int texX = (x - x_s) * ENEMY_SPR_WIDTH / w;
                         for(int y = 0; y < h; y++) {
@@ -248,6 +244,7 @@ bool show_splash(const uint16_t *image) {
 }
 
 int main(void) {
+    main_menu:
     while(1) {
         // Initial seed with RTC as a fallback
         srand(rtc_ticks());
@@ -258,6 +255,7 @@ int main(void) {
         // Re-seed using the entropy gathered during the splash screens
         srand(rtc_ticks() ^ entropy_seed);
 
+        currentLevel = 1;
         while(1) {
             generateMap();
 
@@ -407,14 +405,26 @@ int main(void) {
                 if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
                 if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
                 if(keydown(KEY_F6) && !bullet.active) { bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f; bullet.dx = dirX; bullet.dy = dirY; bullet.active = true; }
+
+                // Check if player is on the exit area (tile type 2)
+                if (worldMap[(int)posX][(int)posY] == 2) {
+                    if (currentLevel == 7) {
+                        // finished final level - go back to splash screens
+                        currentLevel = 1;
+                        goto main_menu;
+                    }
+                    currentLevel++;
+                    break; // exit inner loop to regenerate map for next level
+                }
             }
 
             if (died) {
                 if (!show_splash(deathscreen)) return 0;
-                // if F6 pressed (show_splash returns true), loop will continue to generateMap()
-            } else {
-                break;
+                currentLevel = 1;
+                // continue to generateMap() for level 1
             }
+            // If not died, we just finished a level, so currentLevel was already incremented.
+            // Loop continues to generateMap() for the next level.
         }
     }
     return 0;
