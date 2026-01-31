@@ -13,7 +13,7 @@ target_link_libraries(postvoid Gint::Gint m)
 generate_g3a(
   TARGET postvoid
   OUTPUT "${CMAKE_SOURCE_DIR}/PostVoid.g3a"
-  NAME "Hello World"
+  NAME "Post Void"
   ICONS
     "${CMAKE_SOURCE_DIR}/assets-cg/icon-uns.png"
     "${CMAKE_SOURCE_DIR}/assets-cg/icon-sel.png"

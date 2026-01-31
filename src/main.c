@@ -210,12 +210,12 @@ void render() {
         float tby = invDetB * (-planeY * bx + planeX * by);
         if(tby > 0.1f) {
             int bsx = (int)((SCREEN_WIDTH / 2) * (1 + tbx / tby));
-            int bsy = SCREEN_HEIGHT / 2 + horiz;
+            int bsy = SCREEN_HEIGHT / 2;
             if(bsx >= 0 && bsx < SCREEN_WIDTH && tby < zBuffer[bsx]) drect(bsx-1, bsy-1, bsx+1, bsy+1, C_WHITE);
         }
     }
 
-    int cx = SCREEN_WIDTH / 2, cy = SCREEN_HEIGHT / 2 + horiz;
+    int cx = SCREEN_WIDTH / 2, cy = SCREEN_HEIGHT / 2;
     dline(cx - 4, cy, cx + 4, cy, C_WHITE);
     dline(cx, cy - 4, cx, cy + 4, C_WHITE);
     dupdate();
@@ -300,53 +300,97 @@ int main(void) {
 
                 // update bullet if active
                 if(bullet.active) {
-                    bullet.x += bullet.dx * 0.7f; // faster bullet
+                    bullet.x += bullet.dx * 0.7f;
                     bullet.y += bullet.dy * 0.7f;
                     int bx = (int)bullet.x, by = (int)bullet.y;
                     if(bx < 0 || bx >= MAP_WIDTH || by < 0 || by >= MAP_HEIGHT || worldMap[bx][by] == 1) {
                         bullet.active = false;
                     } else {
                         for(int i = 0; i < actualEnemyCount; i++) {
-                            if(enemies[i].alive) {
-                                float dx = bullet.x - enemies[i].x;
-                                float dy = bullet.y - enemies[i].y;
-                                if(dx*dx + dy*dy < 0.3f) { 
-                                    enemies[i].alive = false; 
-                                    bullet.active = false; 
-                                    playerHP += 35.0f; // gain HP on kill
-                                    if (playerHP > maxHP) playerHP = maxHP;
-                                    break; 
+                            if(!enemies[i].alive) continue;
+                            
+                            float dx = bullet.x - enemies[i].x;
+                            float dy = bullet.y - enemies[i].y;
+                            float distSq = dx*dx + dy*dy;
+                            
+                            // broad-phase: check if bullet is within a reasonable distance (0.6 world units)
+                            if(distSq < 0.36f) {
+                                // narrow-phase: pixel-perfect billboard collision
+                                // vector from player to enemy
+                                float pex = enemies[i].x - posX;
+                                float pey = enemies[i].y - posY;
+                                float peDist = sqrtf(pex*pex + pey*pey);
+                                
+                                // perpendicular vector for billboard width
+                                float perpX = -pey / peDist;
+                                float perpY = pex / peDist;
+                                
+                                // project bullet offset onto perp vector
+                                float offset = dx * perpX + dy * perpY;
+                                
+                                // sprite width in world space is (SPR_WIDTH / SPR_HEIGHT) * unit_height
+                                float worldW = (float)ENEMY_SPR_WIDTH / ENEMY_SPR_HEIGHT;
+                                if (fabsf(offset) < worldW / 2.0f) {
+                                    // map offset to texture X
+                                    int texX = (int)((offset / worldW + 0.5f) * ENEMY_SPR_WIDTH);
+                                    if (texX >= 0 && texX < ENEMY_SPR_WIDTH) {
+                                        // check multiple vertical points (or just center for simplicity)
+                                        // check if vertical slice at texX is not all transparent to check if bullet actually hit enemy's hitbox
+                                        bool hit = false;
+                                        for (int ty = 0; ty < ENEMY_SPR_HEIGHT; ty++) {
+                                            if (enemy_sprite[ty * ENEMY_SPR_WIDTH + texX] != -1) {
+                                                hit = true;
+                                                break;
+                                            }
+                                        }
+                                        
+                                        if (hit) {
+                                            enemies[i].alive = false; 
+                                            bullet.active = false; 
+                                            playerHP += 35.0f;
+                                            if (playerHP > maxHP) playerHP = maxHP;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // enemy AI logic
-                for(int i = 0; i < actualEnemyCount; i++) {
-                    if(!enemies[i].alive) continue;
+            // enemy AI logic
+            for(int i = 0; i < actualEnemyCount; i++) {
+                if(!enemies[i].alive) continue;
 
-                    float edx = posX - enemies[i].x;
-                    float edy = posY - enemies[i].y;
-                    float distSq = edx * edx + edy * edy;
+                float edx = posX - enemies[i].x;
+                float edy = posY - enemies[i].y;
+                float distSq = edx * edx + edy * edy;
 
-                    if(enemies[i].mode == 0 && distSq < 64.0f) { // 8 blocks aggro
-                        enemies[i].mode = 1;
+                if(enemies[i].mode == 0 && distSq < 64.0f) { // 8 blocks aggro
+                    enemies[i].mode = 1;
+                }
+
+                if(enemies[i].mode == 1) {
+                    float dist = sqrtf(distSq);
+                    if(dist > 0.1f) {
+                        float moveX = (edx / dist) * enemies[i].speed;
+                        float moveY = (edy / dist) * enemies[i].speed;
+                        
+                        // player hitbox (stop enemy from entering player and becoming invisible)
+                        float nextX = enemies[i].x + moveX;
+                        float nextY = enemies[i].y + moveY;
+                        float n_edx = posX - nextX;
+                        float n_edy = posY - nextY;
+                        if(n_edx*n_edx + n_edy*n_edy > 0.25f) { // keep 0.5 distance
+                            if(worldMap[(int)nextX][(int)enemies[i].y] != 1) enemies[i].x = nextX;
+                            if(worldMap[(int)enemies[i].x][(int)nextY] != 1) enemies[i].y = nextY;
+                        }
                     }
-
-                    if(enemies[i].mode == 1) {
-                        float dist = sqrtf(distSq);
-                        if(dist > 0.1f) {
-                            float moveX = (edx / dist) * enemies[i].speed;
-                            float moveY = (edy / dist) * enemies[i].speed;
-                            if(worldMap[(int)(enemies[i].x + moveX)][(int)enemies[i].y] != 1) enemies[i].x += moveX;
-                            if(worldMap[(int)enemies[i].x][(int)(enemies[i].y + moveY)] != 1) enemies[i].y += moveY;
-                        }
-                        if(distSq < 0.25f) { // damage player
-                            playerHP -= 1.0f;
-                        }
+                    if(distSq < 0.36f) { // damage player if close (0.6 blocks)
+                        playerHP -= 1.0f;
                     }
                 }
+            }
 
                 render();
                 clearevents();
