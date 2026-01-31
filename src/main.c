@@ -357,6 +357,7 @@ int main(void) {
                 }
 
             // enemy AI logic
+            bool playerSlowed = false;
             for(int i = 0; i < actualEnemyCount; i++) {
                 if(!enemies[i].alive) continue;
 
@@ -368,11 +369,19 @@ int main(void) {
                     enemies[i].mode = 1;
                 }
 
-                if(enemies[i].mode == 1) {
+                // lunge logic (postvoid attack_run)
+                if(enemies[i].mode == 1 && distSq < 9.0f) { // 3 blocks lunge range
+                    enemies[i].mode = 2; // lunge mode
+                } else if(enemies[i].mode == 2 && distSq > 16.0f) { // exit lunge if too far
+                    enemies[i].mode = 1;
+                }
+
+                if(enemies[i].mode >= 1) {
                     float dist = sqrtf(distSq);
                     if(dist > 0.1f) {
-                        float moveX = (edx / dist) * enemies[i].speed;
-                        float moveY = (edy / dist) * enemies[i].speed;
+                        float speed = (enemies[i].mode == 2) ? enemies[i].speed * 2.0f : enemies[i].speed;
+                        float moveX = (edx / dist) * speed;
+                        float moveY = (edy / dist) * speed;
                         
                         // player hitbox (stop enemy from entering player and becoming invisible)
                         float nextX = enemies[i].x + moveX;
@@ -382,9 +391,12 @@ int main(void) {
                         if(n_edx*n_edx + n_edy*n_edy > 0.25f) { // keep 0.5 distance
                             if(worldMap[(int)nextX][(int)enemies[i].y] != 1) enemies[i].x = nextX;
                             if(worldMap[(int)enemies[i].x][(int)nextY] != 1) enemies[i].y = nextY;
+                        } else {
+                            // if colliding with player slow player down
+                            playerSlowed = true;
                         }
                     }
-                    if(distSq < 0.36f) { // damage player if close (0.6 blocks)
+                    if(distSq < 0.49f) { // damage player if close (0.7 blocks)
                         playerHP -= 1.0f;
                     }
                 }
@@ -394,7 +406,8 @@ int main(void) {
                 clearevents();
                 if(keydown(KEY_EXIT) || keydown(KEY_MENU)) return 0;
 
-                float moveStep = 0.25f; // faster movement
+                float moveStep = 0.25f; // base movement
+                if (playerSlowed) moveStep *= 0.25f; // slow down factor (from postvoid enemy_slow_factor)
                 float rotStep = 0.12f; // faster rotation
                 if(keydown(KEY_8)) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] != 1) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] != 1) posY += dirY * moveStep; }
                 if(keydown(KEY_5)) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] != 1) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] != 1) posY -= dirY * moveStep; }
