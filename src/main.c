@@ -10,6 +10,7 @@
 #include "assets/wall_texture.h"
 #include "screens/startscreen.h"
 #include "screens/controlsscreen.h"
+#include "screens/deathscreen.h"
 
 #define SCREEN_WIDTH 396
 #define SCREEN_HEIGHT 224
@@ -17,10 +18,13 @@
 #define MAX_ENEMIES 10
 
 // player state
-float posX = 1.5f, posY = 1.5f;
+float posX = 1.5f, posY = MAP_HEIGHT / 2.0f + 0.5f;
 float dirX = 1.0f, dirY = 0.0f;
 float planeX = 0.0f, planeY = 0.66f;
 float pitch = 0.0f;
+float playerHP = 125.0f;
+float maxHP = 125.0f;
+float hpDecay = 0.25f; // per frame
 
 float zBuffer[SCREEN_WIDTH];
 float sphereX = MAP_WIDTH - 2.5f;
@@ -29,29 +33,11 @@ float sphereY = MAP_HEIGHT - 2.5f;
 typedef struct { float x, y, dx, dy; bool active; } Bullet;
 Bullet bullet = {0};
 
-typedef struct { float x, y; bool alive; } Enemy;
+typedef struct { float x, y; bool alive; float speed; int mode; } Enemy;
 Enemy enemies[MAX_ENEMIES];
 int actualEnemyCount = 0;
 
 void render() {
-    // update bullet if active
-    if(bullet.active) {
-        bullet.x += bullet.dx * 0.5f;
-        bullet.y += bullet.dy * 0.5f;
-        int bx = (int)bullet.x, by = (int)bullet.y;
-        if(bx < 0 || bx >= MAP_WIDTH || by < 0 || by >= MAP_HEIGHT || worldMap[bx][by] == 1) {
-            bullet.active = false;
-        } else {
-            for(int i = 0; i < actualEnemyCount; i++) {
-                if(enemies[i].alive) {
-                    float dx = bullet.x - enemies[i].x;
-                    float dy = bullet.y - enemies[i].y;
-                    if(dx*dx + dy*dy < 0.3f) { enemies[i].alive = false; bullet.active = false; break; }
-                }
-            }
-        }
-    }
-
     uint16_t *vram = gint_vram;
     int horiz = (int)pitch;
 
@@ -204,7 +190,19 @@ void render() {
         }
     }
 
-    // bullet and crosshair rendering (fix)
+    // health bar (will eventually be white liquid jar)
+    int hp_bar_w = 100;
+    int hp_bar_h = 10;
+    int hp_x = 10;
+    int hp_y = SCREEN_HEIGHT - 20;
+    drect(hp_x - 1, hp_y - 1, hp_x + hp_bar_w + 1, hp_y + hp_bar_h + 1, C_WHITE);
+    int current_hp_w = (int)(playerHP * hp_bar_w / maxHP);
+    if (current_hp_w > 0) {
+        if (current_hp_w > hp_bar_w) current_hp_w = hp_bar_w;
+        drect(hp_x, hp_y, hp_x + current_hp_w, hp_y + hp_bar_h, C_RGB(31, 0, 0));
+    }
+
+    // bullet and crosshair rendering
     if(bullet.active) {
         float bx = bullet.x - posX, by = bullet.y - posY;
         float invDetB = 1.0f / (planeX * dirY - dirX * planeY);
@@ -250,54 +248,130 @@ bool show_splash(const uint16_t *image) {
 }
 
 int main(void) {
-    // Initial seed with RTC as a fallback
-    srand(rtc_ticks());
+    while(1) {
+        // Initial seed with RTC as a fallback
+        srand(rtc_ticks());
 
-    if (!show_splash(startscreen)) return 0;
-    if (!show_splash(controlsscreen)) return 0;
+        if (!show_splash(startscreen)) return 0;
+        if (!show_splash(controlsscreen)) return 0;
 
-    // Re-seed using the entropy gathered during the splash screens
-    srand(rtc_ticks() ^ entropy_seed);
+        // Re-seed using the entropy gathered during the splash screens
+        srand(rtc_ticks() ^ entropy_seed);
 
-    generateMap();
+        while(1) {
+            generateMap();
 
-    // scan worldMap for enemies (marked as 3) and sphere (marked as 2)
-    actualEnemyCount = 0;
-    for(int y = 0; y < MAP_HEIGHT; y++) {
-        for(int x = 0; x < MAP_WIDTH; x++) {
-            if(worldMap[x][y] == 3 && actualEnemyCount < MAX_ENEMIES) {
-                enemies[actualEnemyCount].x = (float)x + 0.5f;
-                enemies[actualEnemyCount].y = (float)y + 0.5f;
-                enemies[actualEnemyCount].alive = true;
-                actualEnemyCount++;
+            // player state reset
+            posX = 1.5f; posY = MAP_HEIGHT / 2.0f + 0.5f;
+            dirX = 1.0f; dirY = 0.0f;
+            planeX = 0.0f; planeY = 0.66f;
+            pitch = 0.0f;
+            playerHP = 125.0f;
+
+            // scan worldMap for enemies (marked as 3) and sphere (marked as 2)
+            actualEnemyCount = 0;
+            for(int y = 0; y < MAP_HEIGHT; y++) {
+                for(int x = 0; x < MAP_WIDTH; x++) {
+                    if(worldMap[x][y] == 3 && actualEnemyCount < MAX_ENEMIES) {
+                        enemies[actualEnemyCount].x = (float)x + 0.5f;
+                        enemies[actualEnemyCount].y = (float)y + 0.5f;
+                        enemies[actualEnemyCount].alive = true;
+                        enemies[actualEnemyCount].speed = 0.08f + (rand() % 10) * 0.01f; // faster enemies
+                        enemies[actualEnemyCount].mode = 0; // 0 = idle, 1 = hunt
+                        actualEnemyCount++;
+                    }
+                    if(worldMap[x][y] == 2) {
+                        sphereX = (float)x + 0.5f;
+                        sphereY = (float)y + 0.5f;
+                    }
+                }
             }
-            if(worldMap[x][y] == 2) {
-                sphereX = (float)x + 0.5f;
-                sphereY = (float)y + 0.5f;
+
+            if (worldMap[(int)posX + 1][(int)posY] == 0) { dirX = 1.0f; dirY = 0.0f; planeX = 0.0f; planeY = 0.66f; }
+            else if (worldMap[(int)posX][(int)posY + 1] == 0) { dirX = 0.0f; dirY = 1.0f; planeX = -0.66f; planeY = 0.0f; }
+            else if (worldMap[(int)posX - 1][(int)posY] == 0) { dirX = -1.0f; dirY = 0.0f; planeX = 0.0f; planeY = -0.66f; }
+            else if (worldMap[(int)posX][(int)posY - 1] == 0) { dirX = 0.0f; dirY = -1.0f; planeX = 0.66f; planeY = 0.0f; }
+
+            bool died = false;
+            while(1) {
+                // Update HP
+                playerHP -= hpDecay;
+                if (playerHP <= 0) { died = true; break; }
+
+                // update bullet if active
+                if(bullet.active) {
+                    bullet.x += bullet.dx * 0.7f; // faster bullet
+                    bullet.y += bullet.dy * 0.7f;
+                    int bx = (int)bullet.x, by = (int)bullet.y;
+                    if(bx < 0 || bx >= MAP_WIDTH || by < 0 || by >= MAP_HEIGHT || worldMap[bx][by] == 1) {
+                        bullet.active = false;
+                    } else {
+                        for(int i = 0; i < actualEnemyCount; i++) {
+                            if(enemies[i].alive) {
+                                float dx = bullet.x - enemies[i].x;
+                                float dy = bullet.y - enemies[i].y;
+                                if(dx*dx + dy*dy < 0.3f) { 
+                                    enemies[i].alive = false; 
+                                    bullet.active = false; 
+                                    playerHP += 35.0f; // gain HP on kill
+                                    if (playerHP > maxHP) playerHP = maxHP;
+                                    break; 
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // enemy AI logic
+                for(int i = 0; i < actualEnemyCount; i++) {
+                    if(!enemies[i].alive) continue;
+
+                    float edx = posX - enemies[i].x;
+                    float edy = posY - enemies[i].y;
+                    float distSq = edx * edx + edy * edy;
+
+                    if(enemies[i].mode == 0 && distSq < 64.0f) { // 8 blocks aggro
+                        enemies[i].mode = 1;
+                    }
+
+                    if(enemies[i].mode == 1) {
+                        float dist = sqrtf(distSq);
+                        if(dist > 0.1f) {
+                            float moveX = (edx / dist) * enemies[i].speed;
+                            float moveY = (edy / dist) * enemies[i].speed;
+                            if(worldMap[(int)(enemies[i].x + moveX)][(int)enemies[i].y] != 1) enemies[i].x += moveX;
+                            if(worldMap[(int)enemies[i].x][(int)(enemies[i].y + moveY)] != 1) enemies[i].y += moveY;
+                        }
+                        if(distSq < 0.25f) { // damage player
+                            playerHP -= 1.0f;
+                        }
+                    }
+                }
+
+                render();
+                clearevents();
+                if(keydown(KEY_EXIT) || keydown(KEY_MENU)) return 0;
+
+                float moveStep = 0.25f; // faster movement
+                float rotStep = 0.12f; // faster rotation
+                if(keydown(KEY_8)) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] != 1) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] != 1) posY += dirY * moveStep; }
+                if(keydown(KEY_5)) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] != 1) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] != 1) posY -= dirY * moveStep; }
+                if(keydown(KEY_6)) { if(worldMap[(int)(posX + planeX * moveStep)][(int)posY] != 1) posX += planeX * moveStep; if(worldMap[(int)posX][(int)(posY + planeY * moveStep)] != 1) posY += planeY * moveStep; }
+                if(keydown(KEY_4)) { if(worldMap[(int)(posX - planeX * moveStep)][(int)posY] != 1) posX -= planeX * moveStep; if(worldMap[(int)posX][(int)(posY - planeY * moveStep)] != 1) posY -= planeY * moveStep; }
+                if(keydown(KEY_RIGHT)) { float odx = dirX; dirX = dirX * cosf(rotStep) - dirY * sinf(rotStep); dirY = odx * sinf(rotStep) + dirY * cosf(rotStep); float opx = planeX; planeX = planeX * cosf(rotStep) - planeY * sinf(rotStep); planeY = opx * sinf(rotStep) + planeY * cosf(rotStep); }
+                if(keydown(KEY_LEFT)) { float odx = dirX; dirX = dirX * cosf(-rotStep) - dirY * sinf(-rotStep); dirY = odx * sinf(-rotStep) + dirY * cosf(-rotStep); float opx = planeX; planeX = planeX * cosf(-rotStep) - planeY * sinf(-rotStep); planeY = opx * sinf(-rotStep) + planeY * cosf(-rotStep); }
+                if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
+                if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
+                if(keydown(KEY_F6) && !bullet.active) { bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f; bullet.dx = dirX; bullet.dy = dirY; bullet.active = true; }
+            }
+
+            if (died) {
+                if (!show_splash(deathscreen)) return 0;
+                // if F6 pressed (show_splash returns true), loop will continue to generateMap()
+            } else {
+                break;
             }
         }
-    }
-
-    if (worldMap[(int)posX + 1][(int)posY] == 0) { dirX = 1.0f; dirY = 0.0f; planeX = 0.0f; planeY = 0.66f; }
-    else if (worldMap[(int)posX][(int)posY + 1] == 0) { dirX = 0.0f; dirY = 1.0f; planeX = -0.66f; planeY = 0.0f; }
-    else if (worldMap[(int)posX - 1][(int)posY] == 0) { dirX = -1.0f; dirY = 0.0f; planeX = 0.0f; planeY = -0.66f; }
-    else if (worldMap[(int)posX][(int)posY - 1] == 0) { dirX = 0.0f; dirY = -1.0f; planeX = 0.66f; planeY = 0.0f; }
-
-    while(1) {
-        render();
-        clearevents();
-        if(keydown(KEY_EXIT) || keydown(KEY_MENU)) break;
-        float moveStep = 0.15f;
-        float rotStep = 0.1f;
-        if(keydown(KEY_8)) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] == 0 || worldMap[(int)(posX + dirX * moveStep)][(int)posY] == 3) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] == 0 || worldMap[(int)posX][(int)(posY + dirY * moveStep)] == 3) posY += dirY * moveStep; }
-        if(keydown(KEY_5)) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] == 0 || worldMap[(int)(posX - dirX * moveStep)][(int)posY] == 3) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] == 0 || worldMap[(int)posX][(int)(posY - dirY * moveStep)] == 3) posY -= dirY * moveStep; }
-        if(keydown(KEY_6)) { if(worldMap[(int)(posX + planeX * moveStep)][(int)posY] == 0 || worldMap[(int)(posX + planeX * moveStep)][(int)posY] == 3) posX += planeX * moveStep; if(worldMap[(int)posX][(int)(posY + planeY * moveStep)] == 0 || worldMap[(int)posX][(int)(posY + planeY * moveStep)] == 3) posY += planeY * moveStep; }
-        if(keydown(KEY_4)) { if(worldMap[(int)(posX - planeX * moveStep)][(int)posY] == 0 || worldMap[(int)(posX - planeX * moveStep)][(int)posY] == 3) posX -= planeX * moveStep; if(worldMap[(int)posX][(int)(posY - planeY * moveStep)] == 0 || worldMap[(int)posX][(int)(posY - planeY * moveStep)] == 3) posY -= planeY * moveStep; }
-        if(keydown(KEY_RIGHT)) { float odx = dirX; dirX = dirX * cosf(rotStep) - dirY * sinf(rotStep); dirY = odx * sinf(rotStep) + dirY * cosf(rotStep); float opx = planeX; planeX = planeX * cosf(rotStep) - planeY * sinf(rotStep); planeY = opx * sinf(rotStep) + planeY * cosf(rotStep); }
-        if(keydown(KEY_LEFT)) { float odx = dirX; dirX = dirX * cosf(-rotStep) - dirY * sinf(-rotStep); dirY = odx * sinf(-rotStep) + dirY * cosf(-rotStep); float opx = planeX; planeX = planeX * cosf(-rotStep) - planeY * sinf(-rotStep); planeY = opx * sinf(-rotStep) + planeY * cosf(-rotStep); }
-        if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
-        if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
-        if(keydown(KEY_F6) && !bullet.active) { bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f; bullet.dx = dirX; bullet.dy = dirY; bullet.active = true; }
     }
     return 0;
 }

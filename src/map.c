@@ -1,97 +1,99 @@
 #include <stdlib.h>
 #include <stdbool.h>
+#include <math.h>
 #include "map.h"
 
 int worldMap[MAP_WIDTH][MAP_HEIGHT];
 
-// A simple shuffle function for the directions
-static void shuffle_directions(int directions[4][2]) {
-    for (int i = 3; i > 0; i--) {
-        int j = rand() % (i + 1);
-        int tempX = directions[i][0];
-        int tempY = directions[i][1];
-        directions[i][0] = directions[j][0];
-        directions[i][1] = directions[j][1];
-        directions[j][0] = tempX;
-        directions[j][1] = tempY;
-    }
-}
-
-static void recursiveBacktracker(int x, int y) {
-    worldMap[x][y] = 0;
-    
-    int directions[4][2] = {
-        {0, 2}, {0, -2}, {2, 0}, {-2, 0}
-    };
-    
-    shuffle_directions(directions);
-    
-    for (int i = 0; i < 4; i++) {
-        int dx = directions[i][0];
-        int dy = directions[i][1];
-        int nx = x + dx;
-        int ny = y + dy;
-        
-        if (nx > 0 && nx < MAP_WIDTH - 1 && ny > 0 && ny < MAP_HEIGHT - 1) {
-            if (worldMap[nx][ny] == 1) {
-                worldMap[x + dx / 2][y + dy / 2] = 0;
-                recursiveBacktracker(nx, ny);
+static void create_room(int rx, int ry, int rw, int rh) {
+    for (int x = rx; x < rx + rw; x++) {
+        for (int y = ry; y < ry + rh; y++) {
+            if (x > 0 && x < MAP_WIDTH - 1 && y > 0 && y < MAP_HEIGHT - 1) {
+                worldMap[x][y] = 0;
             }
         }
     }
 }
 
 void generateMap(void) {
-    // 1. Initialize maze with walls
+    // 1. Initialize with walls
     for (int x = 0; x < MAP_WIDTH; x++) {
         for (int y = 0; y < MAP_HEIGHT; y++) {
             worldMap[x][y] = 1;
         }
     }
-    
-    // 2. Generate maze starting from (1, 1)
-    recursiveBacktracker(1, 1);
-    
-    // 3. Add multiple paths by randomly removing some walls
-    for (int i = 0; i < MAP_WIDTH * 2; i++) {
-        int rx = 1 + (rand() % (MAP_WIDTH - 2));
-        int ry = 1 + (rand() % (MAP_HEIGHT - 2));
-        if (worldMap[rx][ry] == 1) {
-            worldMap[rx][ry] = 0;
+
+    // 2. Path-based generation (inspired by obj_world_builder)
+    int path_x = 1;
+    int path_y = MAP_HEIGHT / 2;
+    int goal_x = MAP_WIDTH - 2;
+
+    while (path_x <= goal_x) {
+        worldMap[path_x][path_y] = 0;
+        
+        // Occasionally clear extra Y for wider corridors
+        if (rand() % 100 < 40) {
+            int extra_y = path_y + (rand() % 2 == 0 ? 1 : -1);
+            if (extra_y > 0 && extra_y < MAP_HEIGHT - 1) {
+                worldMap[path_x][extra_y] = 0;
+            }
+        }
+
+        // Randomly turn
+        if (rand() % 100 < 30) {
+            int new_y = path_y + (rand() % 2 == 0 ? 1 : -1);
+            if (new_y > 0 && new_y < MAP_HEIGHT - 1) {
+                path_y = new_y;
+            }
+        } else {
+            path_x++;
+        }
+
+        // Randomly create a room
+        if (path_x % 10 == 5 && rand() % 100 < 50) {
+            int rw = 3 + rand() % 4;
+            int rh = 3 + rand() % 4;
+            int rx = path_x - rw / 2;
+            int ry = path_y - rh / 2;
+            create_room(rx, ry, rw, rh);
+            
+            // Add a pillar (inspired by scr_wb_create_room "pillar" type)
+            if (rw >= 3 && rh >= 3 && rand() % 100 < 40) {
+                int px = rx + rw / 2;
+                int py = ry + rh / 2;
+                if (px > 0 && px < MAP_WIDTH - 1 && py > 0 && py < MAP_HEIGHT - 1) {
+                    worldMap[px][py] = 1;
+                }
+            }
         }
     }
-    
-    // 4. Create exit room at bottom right
-    int ROOM_SIZE = 2;
-    for (int x = MAP_WIDTH - ROOM_SIZE - 1; x < MAP_WIDTH - 1; x++) {
-        for (int y = MAP_HEIGHT - ROOM_SIZE - 1; y < MAP_HEIGHT - 1; y++) {
-            worldMap[x][y] = 0;
-        }
-    }
-    
-    // 5. Place temporary sphere in the middle of the exit room
-    int sphere_x = MAP_WIDTH - 2;
-    int sphere_y = MAP_HEIGHT - 2;
-    worldMap[sphere_x][sphere_y] = 2;
-    
-    // 6. Find air spaces and then pick enemy locations
+
+    // 3. Ensure the start is clear
+    worldMap[1][MAP_HEIGHT / 2] = 0;
+    worldMap[2][MAP_HEIGHT / 2] = 0;
+
+    // 4. Place exit sphere at the end of the path and create a small room around it
+    create_room(goal_x - 1, path_y - 1, 3, 3);
+    worldMap[goal_x][path_y] = 2;
+
+    // 5. Find air spaces and pick enemy locations
     struct { int x, y; } air_spaces[MAP_WIDTH * MAP_HEIGHT];
     int air_count = 0;
-    
+
     for (int x = 1; x < MAP_WIDTH - 1; x++) {
         for (int y = 1; y < MAP_HEIGHT - 1; y++) {
-            // Logic from Python: maze[y][x] == 0 and (x > 2 or y > 2) and (x < MAP_SIZE-4 or y < MAP_SIZE-4)
-            if (worldMap[x][y] == 0 && (x > 2 || y > 2) && (x < MAP_WIDTH - 4 || y < MAP_HEIGHT - 4)) {
+            // Avoid placing enemies too close to the start or on the goal
+            if (worldMap[x][y] == 0 && (x > 4)) {
                 air_spaces[air_count].x = x;
                 air_spaces[air_count].y = y;
                 air_count++;
             }
         }
     }
-    
-    // 7. Place up to 4 enemies (marked as 3)
-    int enemies_to_place = (air_count < 4) ? air_count : 4;
-    // Simple random sampling: shuffle air_spaces and take first N
+
+    // 6. Place enemies (marked as 3)
+    int enemies_to_place = (air_count < 10) ? air_count : 10;
+    // Shuffle air_spaces
     for (int i = 0; i < air_count; i++) {
         int j = rand() % air_count;
         int tempX = air_spaces[i].x;
@@ -101,7 +103,7 @@ void generateMap(void) {
         air_spaces[j].x = tempX;
         air_spaces[j].y = tempY;
     }
-    
+
     for (int i = 0; i < enemies_to_place; i++) {
         worldMap[air_spaces[i].x][air_spaces[i].y] = 3;
     }

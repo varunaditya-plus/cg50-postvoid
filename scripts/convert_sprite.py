@@ -88,8 +88,9 @@ def convert_screen(image_path, output_header, var_name):
         f.write("};\n\n#endif\n")
 
 if __name__ == "__main__":
-    convert_enemy("enemy_texture.png", "src/enemy_sprite.h")
-    convert_wall("wall_texture_map.png", "src/wall_texture.h")
-    convert_screen("graphics/startscreen.png", "src/startscreen.h", "startscreen")
-    convert_screen("graphics/controlsscreen.png", "src/controlsscreen.h", "controlsscreen")
+    convert_enemy("scripts/enemy_texture.png", "src/assets/enemy_sprite.h")
+    convert_wall("scripts/wall_texture_map.png", "src/assets/wall_texture.h")
+    convert_screen("graphics/startscreen.png", "src/screens/startscreen.h", "startscreen")
+    convert_screen("graphics/controlsscreen.png", "src/screens/controlsscreen.h", "controlsscreen")
+    convert_screen("graphics/deathscreen.png", "src/screens/deathscreen.h", "deathscreen")
     print("Converted sprites, textures, and screens.")
