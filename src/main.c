@@ -6,8 +6,12 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include "map.h"
-#include "assets/enemy_sprite.h"
+#include "assets/enemy_melee_walk.h"
+#include "assets/enemy_melee_attack.h"
 #include "assets/wall_texture.h"
+#include "assets/shoot_effect.h"
+#include "assets/gun_idle.h"
+#include "assets/gun_shoot.h"
 #include "screens/startscreen.h"
 #include "screens/controlsscreen.h"
 #include "screens/deathscreen.h"
@@ -15,6 +19,7 @@
 #define SCREEN_WIDTH 396
 #define SCREEN_HEIGHT 224
 #define H_RES 4 // render each 4th pixel horizontally for faster rendering
+#define NUM_LEVELS 7
 #define MAX_ENEMIES 10
 
 // player state
@@ -33,8 +38,12 @@ int currentLevel = 1;
 
 typedef struct { float x, y, dx, dy; bool active; } Bullet;
 Bullet bullet = {0};
+int shootEffectTimer = 0;
+int gunShootTimer = 0;
+static int gunIdleAnimFrame = 0;
+#define GUN_SHOOT_DURATION 8
 
-typedef struct { float x, y; bool alive; float speed; int mode; } Enemy;
+typedef struct { float x, y; bool alive; float speed; int mode; bool attacking; int anim_frame; } Enemy;
 Enemy enemies[MAX_ENEMIES];
 int actualEnemyCount = 0;
 
@@ -125,7 +134,7 @@ void render() {
         for(int y = y_start; y <= y_end; y++) {
             int texY = (int)texPos & (TEX_HEIGHT - 1);
             texPos += step_tex;
-            uint16_t color = wall_textures[currentLevel - 1][(texY << 7) | texX];
+            uint16_t color = wall_textures[currentLevel - 1][texY * TEX_WIDTH + texX];
 
             if (final_shade < 240) {
                 int r = ((color >> 11) * final_shade) >> 8;
@@ -158,28 +167,51 @@ void render() {
         if(ty > 0.3f) {
             int screenX = (int)((SCREEN_WIDTH / 2) * (1 + tx / ty));
             int h = (int)fabsf(SCREEN_HEIGHT / ty);
-            int w = isSphere ? h : (int)(h * (float)ENEMY_SPR_WIDTH / ENEMY_SPR_HEIGHT);
-            int x_s = screenX - w/2, x_e = screenX + w/2;
-            
-            for(int x = x_s; x < x_e; x++) {
-                if(x >= 0 && x < SCREEN_WIDTH && ty < zBuffer[x]) {
-                    if (isSphere) {
+            int spr_w = ENEMY_MELEE_WALK_WIDTH, spr_h = ENEMY_MELEE_WALK_HEIGHT;
+            int w = isSphere ? h : (int)(h * (float)spr_w / spr_h);
+            int x_s = screenX - w/2, y_s = SCREEN_HEIGHT / 2 - h / 2 + horiz;
+            int x_e = screenX + w/2;
+
+            if (isSphere) {
+                for(int x = x_s; x < x_e; x++) {
+                    if(x >= 0 && x < SCREEN_WIDTH && ty < zBuffer[x]) {
                         int vh = h / 2;
                         int vs = SCREEN_HEIGHT / 2 + horiz;
                         int ve = vs + vh;
                         if (vs < 0) vs = 0;
                         if (ve >= SCREEN_HEIGHT) ve = SCREEN_HEIGHT - 1;
                         for(int y = vs; y <= ve; y++) vram[y * SCREEN_WIDTH + x] = C_WHITE;
-                    } else {
-                        int texX = (x - x_s) * ENEMY_SPR_WIDTH / w;
-                        for(int y = 0; y < h; y++) {
-                            int dy = y + SCREEN_HEIGHT / 2 - h / 2 + horiz;
-                            if(dy >= 0 && dy < SCREEN_HEIGHT) {
-                                int texY = y * ENEMY_SPR_HEIGHT / h;
-                                int color = enemy_sprite[texY * ENEMY_SPR_WIDTH + texX];
-                                if(color != -1) vram[dy * SCREEN_WIDTH + x] = color;
-                            }
-                        }
+                    }
+                }
+            } else {
+                const enemy_melee_walk_frame_t *fi_w = &enemy_melee_walk_frame_info[enemies[i].anim_frame % ENEMY_MELEE_WALK_FRAMES];
+                const enemy_melee_attack_frame_t *fi_a = &enemy_melee_attack_frame_info[enemies[i].anim_frame % ENEMY_MELEE_ATTACK_FRAMES];
+                int fx, fy, fw, fh;
+                const uint16_t *pixels;
+                if (enemies[i].attacking) {
+                    fx = fi_a->x; fy = fi_a->y; fw = fi_a->w; fh = fi_a->h;
+                    pixels = &enemy_melee_attack_pixels[fi_a->offset];
+                } else {
+                    fx = fi_w->x; fy = fi_w->y; fw = fi_w->w; fh = fi_w->h;
+                    pixels = &enemy_melee_walk_pixels[fi_w->offset];
+                }
+                float scale_x = (float)w / spr_w, scale_y = (float)h / spr_h;
+                int crop_scr_w = (int)(fw * scale_x);
+                int crop_scr_h = (int)(fh * scale_y);
+                int x0_scr = x_s + (int)(fx * scale_x);
+                int y0_scr = y_s + (int)(fy * scale_y);
+                for (int dy = 0; dy < crop_scr_h; dy++) {
+                    int py = y0_scr + dy;
+                    if (py < 0 || py >= SCREEN_HEIGHT) continue;
+                    int texY = dy * fh / crop_scr_h;
+                    for (int dx = 0; dx < crop_scr_w; dx++) {
+                        int px = x0_scr + dx;
+                        if (px < 0 || px >= SCREEN_WIDTH) continue;
+                        if (ty >= zBuffer[px]) continue;
+                        int texX = dx * fw / crop_scr_w;
+                        uint16_t color = pixels[texY * fw + texX];
+                        if (color != ENEMY_MELEE_WALK_TRANSPARENT)
+                            vram[py * SCREEN_WIDTH + px] = color;
                     }
                 }
             }
@@ -214,6 +246,70 @@ void render() {
     int cx = SCREEN_WIDTH / 2, cy = SCREEN_HEIGHT / 2;
     dline(cx - 4, cy, cx + 4, cy, C_WHITE);
     dline(cx, cy - 4, cx, cy + 4, C_WHITE);
+
+    // shoot effect
+    if (shootEffectTimer > 0) {
+        int frame = SHOOT_EFFECT_FRAMES - shootEffectTimer;
+        if (frame < 0) frame = 0;
+        if (frame >= SHOOT_EFFECT_FRAMES) frame = SHOOT_EFFECT_FRAMES - 1;
+        const shoot_effect_frame_t *fi = &shoot_effect_frame_info[frame];
+        const uint16_t *src = &shoot_effect_pixels[fi->offset];
+        int x0 = cx - SHOOT_EFFECT_WIDTH / 2 + fi->x, y0 = (SCREEN_HEIGHT - SHOOT_EFFECT_HEIGHT) / 2 + fi->y;
+        for (int dy = 0; dy < fi->h; dy++) {
+            for (int dx = 0; dx < fi->w; dx++) {
+                uint16_t color = src[dy * fi->w + dx];
+                if (color != SHOOT_EFFECT_TRANSPARENT) {
+                    int px = x0 + dx, py = y0 + dy;
+                    if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                        vram[py * SCREEN_WIDTH + px] = color;
+                }
+            }
+        }
+    }
+
+    // gun rendering
+    {
+        int gun_frame;
+        const gun_idle_frame_t *fi_idle;
+        const gun_shoot_frame_t *fi_shoot;
+        const uint16_t *src;
+        int x0, y0, fw, fh;
+        uint16_t transparent_key;
+
+        if (gunShootTimer > 0) {
+            int t = GUN_SHOOT_DURATION - gunShootTimer - 1;
+            gun_frame = t * GUN_SHOOT_FRAMES / GUN_SHOOT_DURATION;
+            if (gun_frame < 0) gun_frame = 0;
+            if (gun_frame >= GUN_SHOOT_FRAMES) gun_frame = GUN_SHOOT_FRAMES - 1;
+            fi_shoot = &gun_shoot_frame_info[gun_frame];
+            src = &gun_shoot_pixels[fi_shoot->offset];
+            x0 = SCREEN_WIDTH - GUN_SHOOT_WIDTH + fi_shoot->x;
+            y0 = SCREEN_HEIGHT - GUN_SHOOT_HEIGHT + fi_shoot->y;
+            fw = fi_shoot->w;
+            fh = fi_shoot->h;
+            transparent_key = GUN_SHOOT_TRANSPARENT;
+        } else {
+            gun_frame = gunIdleAnimFrame % GUN_IDLE_FRAMES;
+            fi_idle = &gun_idle_frame_info[gun_frame];
+            src = &gun_idle_pixels[fi_idle->offset];
+            x0 = SCREEN_WIDTH - GUN_IDLE_WIDTH + fi_idle->x;
+            y0 = SCREEN_HEIGHT - GUN_IDLE_HEIGHT + fi_idle->y;
+            fw = fi_idle->w;
+            fh = fi_idle->h;
+            transparent_key = GUN_IDLE_TRANSPARENT;
+        }
+        for (int dy = 0; dy < fh; dy++) {
+            for (int dx = 0; dx < fw; dx++) {
+                uint16_t color = src[dy * fw + dx];
+                if (color != transparent_key) {
+                    int px = x0 + dx, py = y0 + dy;
+                    if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
+                        vram[py * SCREEN_WIDTH + px] = color;
+                }
+            }
+        }
+    }
+
     dupdate();
 }
 
@@ -274,8 +370,10 @@ int main(void) {
                         enemies[actualEnemyCount].x = (float)x + 0.5f;
                         enemies[actualEnemyCount].y = (float)y + 0.5f;
                         enemies[actualEnemyCount].alive = true;
-                        enemies[actualEnemyCount].speed = 0.08f + (rand() % 10) * 0.01f; // faster enemies
-                        enemies[actualEnemyCount].mode = 0; // 0 = idle, 1 = hunt
+                        enemies[actualEnemyCount].speed = 0.08f + (rand() % 10) * 0.01f;
+                        enemies[actualEnemyCount].mode = 0; // 0 = idle, 1 = hunt, 2 = lunge
+                        enemies[actualEnemyCount].attacking = false;
+                        enemies[actualEnemyCount].anim_frame = 0;
                         actualEnemyCount++;
                     }
                     if(worldMap[x][y] == 2) {
@@ -295,6 +393,11 @@ int main(void) {
                 // Update HP
                 playerHP -= hpDecay;
                 if (playerHP <= 0) { died = true; break; }
+                if (shootEffectTimer > 0) shootEffectTimer--;
+                if (gunShootTimer > 0) gunShootTimer--;
+                static int gunIdleTick = 0;
+                gunIdleTick++;
+                if (gunShootTimer == 0 && (gunIdleTick % 8) == 0) gunIdleAnimFrame++;
 
                 // update bullet if active
                 if(bullet.active) {
@@ -326,19 +429,21 @@ int main(void) {
                                 // project bullet offset onto perp vector
                                 float offset = dx * perpX + dy * perpY;
                                 
-                                // sprite width in world space is (SPR_WIDTH / SPR_HEIGHT) * unit_height
-                                float worldW = (float)ENEMY_SPR_WIDTH / ENEMY_SPR_HEIGHT;
+                                // hitbox logic
+                                float worldW = (float)ENEMY_MELEE_WALK_WIDTH / ENEMY_MELEE_WALK_HEIGHT;
                                 if (fabsf(offset) < worldW / 2.0f) {
-                                    // map offset to texture X
-                                    int texX = (int)((offset / worldW + 0.5f) * ENEMY_SPR_WIDTH);
-                                    if (texX >= 0 && texX < ENEMY_SPR_WIDTH) {
-                                        // check multiple vertical points (or just center for simplicity)
-                                        // check if vertical slice at texX is not all transparent to check if bullet actually hit enemy's hitbox
+                                    int texX = (int)((offset / worldW + 0.5f) * ENEMY_MELEE_WALK_WIDTH);
+                                    if (texX >= 0 && texX < ENEMY_MELEE_WALK_WIDTH) {
+                                        const enemy_melee_walk_frame_t *hb = &enemy_melee_walk_frame_info[0];
                                         bool hit = false;
-                                        for (int ty = 0; ty < ENEMY_SPR_HEIGHT; ty++) {
-                                            if (enemy_sprite[ty * ENEMY_SPR_WIDTH + texX] != -1) {
-                                                hit = true;
-                                                break;
+                                        if (texX >= hb->x && texX < hb->x + hb->w) {
+                                            int px = texX - hb->x;
+                                            for (int ty = hb->y; ty < hb->y + hb->h; ty++) {
+                                                int py = ty - hb->y;
+                                                if (enemy_melee_walk_pixels[hb->offset + py * hb->w + px] != ENEMY_MELEE_WALK_TRANSPARENT) {
+                                                    hit = true;
+                                                    break;
+                                                }
                                             }
                                         }
                                         
@@ -358,12 +463,16 @@ int main(void) {
 
             // enemy AI logic
             bool playerSlowed = false;
+            static int enemy_anim_tick = 0;
+            enemy_anim_tick++;
             for(int i = 0; i < actualEnemyCount; i++) {
                 if(!enemies[i].alive) continue;
 
                 float edx = posX - enemies[i].x;
                 float edy = posY - enemies[i].y;
                 float distSq = edx * edx + edy * edy;
+
+                enemies[i].attacking = (distSq < 0.49f);  // attack animation
 
                 if(enemies[i].mode == 0 && distSq < 64.0f) { // 8 blocks aggro
                     enemies[i].mode = 1;
@@ -400,14 +509,20 @@ int main(void) {
                         playerHP -= 1.0f;
                     }
                 }
+
+                // animation speed
+                if (enemy_anim_tick % 4 == 0) {
+                    int nf = enemies[i].attacking ? ENEMY_MELEE_ATTACK_FRAMES : ENEMY_MELEE_WALK_FRAMES;
+                    enemies[i].anim_frame = (enemies[i].anim_frame + 1) % nf;
+                }
             }
 
                 render();
-                clearevents();
+
                 if(keydown(KEY_EXIT) || keydown(KEY_MENU)) return 0;
 
                 float moveStep = 0.25f; // base movement
-                if (playerSlowed) moveStep *= 0.25f; // slow down factor (from postvoid enemy_slow_factor)
+                if (playerSlowed) moveStep *= 0.25f; // slow down factor
                 float rotStep = 0.12f; // faster rotation
                 if(keydown(KEY_8)) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] != 1) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] != 1) posY += dirY * moveStep; }
                 if(keydown(KEY_5)) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] != 1) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] != 1) posY -= dirY * moveStep; }
@@ -417,11 +532,21 @@ int main(void) {
                 if(keydown(KEY_LEFT)) { float odx = dirX; dirX = dirX * cosf(-rotStep) - dirY * sinf(-rotStep); dirY = odx * sinf(-rotStep) + dirY * cosf(-rotStep); float opx = planeX; planeX = planeX * cosf(-rotStep) - planeY * sinf(-rotStep); planeY = opx * sinf(-rotStep) + planeY * cosf(-rotStep); }
                 if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
                 if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
-                if(keydown(KEY_F6) && !bullet.active) { bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f; bullet.dx = dirX; bullet.dy = dirY; bullet.active = true; }
+                if(keydown(KEY_F6)) {
+                    if (!bullet.active) {
+                        bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f;
+                        bullet.dx = dirX; bullet.dy = dirY; bullet.active = true;
+                        shootEffectTimer = SHOOT_EFFECT_FRAMES;
+                        gunShootTimer = GUN_SHOOT_DURATION;
+                    } else if (shootEffectTimer > 0) {
+                        shootEffectTimer = SHOOT_EFFECT_FRAMES;  // restart effect
+                        gunShootTimer = GUN_SHOOT_DURATION;     // restart gun
+                    }
+                }
 
                 // Check if player is on the exit area (tile type 2)
                 if (worldMap[(int)posX][(int)posY] == 2) {
-                    if (currentLevel == 7) {
+                    if (currentLevel == NUM_LEVELS) {
                         // finished final level - go back to splash screens
                         currentLevel = 1;
                         goto main_menu;
@@ -429,6 +554,8 @@ int main(void) {
                     currentLevel++;
                     break; // exit inner loop to regenerate map for next level
                 }
+
+                clearevents();  // clear events
             }
 
             if (died) {
