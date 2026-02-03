@@ -291,4 +291,5 @@ if __name__ == "__main__":
     convert_screen("graphics/startscreen.png", "src/screens/startscreen.h", "startscreen")
     convert_screen("graphics/controlsscreen.png", "src/screens/controlsscreen.h", "controlsscreen")
     convert_screen("graphics/deathscreen.png", "src/screens/deathscreen.h", "deathscreen")
+    convert_screen("graphics/winscreen.png", "src/screens/winscreen.h", "winscreen")
     print("Converted sprites, textures, and screens.")

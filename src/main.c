@@ -15,6 +15,7 @@
 #include "screens/startscreen.h"
 #include "screens/controlsscreen.h"
 #include "screens/deathscreen.h"
+#include "screens/winscreen.h"
 
 #define SCREEN_WIDTH 396
 #define SCREEN_HEIGHT 224
@@ -547,7 +548,7 @@ int main(void) {
                 // Check if player is on the exit area (tile type 2)
                 if (worldMap[(int)posX][(int)posY] == 2) {
                     if (currentLevel == NUM_LEVELS) {
-                        // finished final level - go back to splash screens
+                        if (!show_splash(winscreen)) return 0;
                         currentLevel = 1;
                         goto main_menu;
                     }
