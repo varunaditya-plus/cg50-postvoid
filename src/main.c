@@ -138,13 +138,14 @@ void render() {
         for(int y = y_start; y <= y_end; y++) {
             int texY = (int)texPos & (TEX_HEIGHT - 1);
             texPos += step_tex;
-            uint16_t color = wall_textures[currentLevel - 1][texY * TEX_WIDTH + texX];
+            uint8_t idx = wall_textures[currentLevel - 1][texY * TEX_WIDTH + texX];
+            uint16_t color = wall_palette[idx];
 
             if (final_shade < 240) {
                 int r = ((color >> 11) * final_shade) >> 8;
-                int g = (((color >> 5) & 0x3F) * final_shade) >> 8;
+                int g = (((color >> 6) & 0x1F) * final_shade) >> 8;
                 int b = ((color & 0x1F) * final_shade) >> 8;
-                color = (r << 11) | (g << 5) | b;
+                color = (r << 11) | (g << 6) | b;
             }
 
             dest[0] = color; dest[1] = color; dest[2] = color; dest[3] = color;
@@ -191,13 +192,19 @@ void render() {
                 const enemy_melee_walk_frame_t *fi_w = &enemy_melee_walk_frame_info[enemies[i].anim_frame % ENEMY_MELEE_WALK_FRAMES];
                 const enemy_melee_attack_frame_t *fi_a = &enemy_melee_attack_frame_info[enemies[i].anim_frame % ENEMY_MELEE_ATTACK_FRAMES];
                 int fx, fy, fw, fh;
-                const uint16_t *pixels;
+                const uint8_t *pixels;
+                const uint16_t *palette;
+                int trans_idx;
                 if (enemies[i].attacking) {
                     fx = fi_a->x; fy = fi_a->y; fw = fi_a->w; fh = fi_a->h;
                     pixels = &enemy_melee_attack_pixels[fi_a->offset];
+                    palette = enemy_melee_attack_palette;
+                    trans_idx = ENEMY_MELEE_ATTACK_TRANSPARENT_IDX;
                 } else {
                     fx = fi_w->x; fy = fi_w->y; fw = fi_w->w; fh = fi_w->h;
                     pixels = &enemy_melee_walk_pixels[fi_w->offset];
+                    palette = enemy_melee_walk_palette;
+                    trans_idx = ENEMY_MELEE_WALK_TRANSPARENT_IDX;
                 }
                 float scale_x = (float)w / spr_w, scale_y = (float)h / spr_h;
                 int crop_scr_w = (int)(fw * scale_x);
@@ -213,9 +220,11 @@ void render() {
                         if (px < 0 || px >= SCREEN_WIDTH) continue;
                         if (ty >= zBuffer[px]) continue;
                         int texX = dx * fw / crop_scr_w;
-                        uint16_t color = pixels[texY * fw + texX];
-                        if (color != ENEMY_MELEE_WALK_TRANSPARENT)
+                        uint8_t idx = pixels[texY * fw + texX];
+                        if (idx != trans_idx) {
+                            uint16_t color = palette[idx];
                             vram[py * SCREEN_WIDTH + px] = color;
+                        }
                     }
                 }
             }
@@ -257,12 +266,13 @@ void render() {
         if (frame < 0) frame = 0;
         if (frame >= SHOOT_EFFECT_FRAMES) frame = SHOOT_EFFECT_FRAMES - 1;
         const shoot_effect_frame_t *fi = &shoot_effect_frame_info[frame];
-        const uint16_t *src = &shoot_effect_pixels[fi->offset];
+        const uint8_t *src_indices = &shoot_effect_pixels[fi->offset];
         int x0 = cx - SHOOT_EFFECT_WIDTH / 2 + fi->x, y0 = (SCREEN_HEIGHT - SHOOT_EFFECT_HEIGHT) / 2 + fi->y;
         for (int dy = 0; dy < fi->h; dy++) {
             for (int dx = 0; dx < fi->w; dx++) {
-                uint16_t color = src[dy * fi->w + dx];
-                if (color != SHOOT_EFFECT_TRANSPARENT) {
+                uint8_t idx = src_indices[dy * fi->w + dx];
+                if (idx != SHOOT_EFFECT_TRANSPARENT_IDX) {
+                    uint16_t color = shoot_effect_palette[idx];
                     int px = x0 + dx, py = y0 + dy;
                     if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
                         vram[py * SCREEN_WIDTH + px] = color;
@@ -276,9 +286,10 @@ void render() {
         int gun_frame;
         const gun_idle_frame_t *fi_idle;
         const gun_shoot_frame_t *fi_shoot;
-        const uint16_t *src;
+        const uint8_t *src_indices;
+        const uint16_t *palette;
         int x0, y0, fw, fh;
-        uint16_t transparent_key;
+        int transparent_idx;
 
         if (gunShootTimer > 0) {
             int t = GUN_SHOOT_DURATION - gunShootTimer - 1;
@@ -286,26 +297,29 @@ void render() {
             if (gun_frame < 0) gun_frame = 0;
             if (gun_frame >= GUN_SHOOT_FRAMES) gun_frame = GUN_SHOOT_FRAMES - 1;
             fi_shoot = &gun_shoot_frame_info[gun_frame];
-            src = &gun_shoot_pixels[fi_shoot->offset];
+            src_indices = &gun_shoot_pixels[fi_shoot->offset];
+            palette = gun_shoot_palette;
             x0 = SCREEN_WIDTH - GUN_SHOOT_WIDTH + fi_shoot->x;
             y0 = SCREEN_HEIGHT - GUN_SHOOT_HEIGHT + fi_shoot->y;
             fw = fi_shoot->w;
             fh = fi_shoot->h;
-            transparent_key = GUN_SHOOT_TRANSPARENT;
+            transparent_idx = GUN_SHOOT_TRANSPARENT_IDX;
         } else {
             gun_frame = gunIdleAnimFrame % GUN_IDLE_FRAMES;
             fi_idle = &gun_idle_frame_info[gun_frame];
-            src = &gun_idle_pixels[fi_idle->offset];
+            src_indices = &gun_idle_pixels[fi_idle->offset];
+            palette = gun_idle_palette;
             x0 = SCREEN_WIDTH - GUN_IDLE_WIDTH + fi_idle->x;
             y0 = SCREEN_HEIGHT - GUN_IDLE_HEIGHT + fi_idle->y;
             fw = fi_idle->w;
             fh = fi_idle->h;
-            transparent_key = GUN_IDLE_TRANSPARENT;
+            transparent_idx = GUN_IDLE_TRANSPARENT_IDX;
         }
         for (int dy = 0; dy < fh; dy++) {
             for (int dx = 0; dx < fw; dx++) {
-                uint16_t color = src[dy * fw + dx];
-                if (color != transparent_key) {
+                uint8_t idx = src_indices[dy * fw + dx];
+                if (idx != transparent_idx) {
+                    uint16_t color = palette[idx];
                     int px = x0 + dx, py = y0 + dy;
                     if (px >= 0 && px < SCREEN_WIDTH && py >= 0 && py < SCREEN_HEIGHT)
                         vram[py * SCREEN_WIDTH + px] = color;
@@ -319,10 +333,10 @@ void render() {
 
 unsigned int entropy_seed = 0;
 
-bool show_splash(const uint16_t *image) {
+bool show_splash(const uint8_t *pixels, const uint16_t *palette) {
     uint16_t *vram = gint_vram;
-    for(int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-        vram[i] = image[i];
+    for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+        vram[i] = palette[pixels[i]];
     }
     dupdate();
     clearevents();
@@ -348,13 +362,14 @@ bool show_controls_selection() {
     int current = selectedPreset;
     clearevents();
     while(1) {
-        const uint16_t *img;
-        if (current == 1) img = preset1;
-        else if (current == 2) img = preset2;
-        else img = preset3;
+        const uint8_t *pixels;
+        const uint16_t *palette;
+        if (current == 1) { pixels = preset1_pixels; palette = preset1_palette; }
+        else if (current == 2) { pixels = preset2_pixels; palette = preset2_palette; }
+        else { pixels = preset3_pixels; palette = preset3_palette; }
 
-        for(int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
-            vram[i] = img[i];
+        for (int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+            vram[i] = palette[pixels[i]];
         }
         dupdate();
 
@@ -389,7 +404,7 @@ int main(void) {
         // Initial seed with RTC as a fallback
         srand(rtc_ticks());
 
-        if (!show_splash(startscreen)) return 0;
+        if (!show_splash(startscreen_pixels, startscreen_palette)) return 0;
         if (!show_controls_selection()) return 0;
 
         // Re-seed using the entropy gathered during the splash screens
@@ -484,7 +499,7 @@ int main(void) {
                                             int px = texX - hb->x;
                                             for (int ty = hb->y; ty < hb->y + hb->h; ty++) {
                                                 int py = ty - hb->y;
-                                                if (enemy_melee_walk_pixels[hb->offset + py * hb->w + px] != ENEMY_MELEE_WALK_TRANSPARENT) {
+                                                if (enemy_melee_walk_pixels[hb->offset + py * hb->w + px] != ENEMY_MELEE_WALK_TRANSPARENT_IDX) {
                                                     hit = true;
                                                     break;
                                                 }
@@ -625,7 +640,7 @@ int main(void) {
                 // Check if player is on the exit area (tile type 2)
                 if (worldMap[(int)posX][(int)posY] == 2) {
                     if (currentLevel == NUM_LEVELS) {
-                        if (!show_splash(winscreen)) return 0;
+                        if (!show_splash(winscreen_pixels, winscreen_palette)) return 0;
                         currentLevel = 1;
                         goto main_menu;
                     }
@@ -637,7 +652,7 @@ int main(void) {
             }
 
             if (died) {
-                if (!show_splash(deathscreen)) return 0;
+                if (!show_splash(deathscreen_pixels, deathscreen_palette)) return 0;
                 currentLevel = 1;
                 // continue to generateMap() for level 1
             }
