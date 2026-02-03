@@ -13,7 +13,9 @@
 #include "assets/gun_idle.h"
 #include "assets/gun_shoot.h"
 #include "screens/startscreen.h"
-#include "screens/controlsscreen.h"
+#include "screens/preset1.h"
+#include "screens/preset2.h"
+#include "screens/preset3.h"
 #include "screens/deathscreen.h"
 #include "screens/winscreen.h"
 
@@ -36,6 +38,7 @@ float zBuffer[SCREEN_WIDTH];
 float sphereX = MAP_WIDTH - 2.5f;
 float sphereY = MAP_HEIGHT - 2.5f;
 int currentLevel = 1;
+int selectedPreset = 1;
 
 typedef struct { float x, y, dx, dy; bool active; } Bullet;
 Bullet bullet = {0};
@@ -328,7 +331,7 @@ bool show_splash(const uint16_t *image) {
         // increment seed while waiting for user input
         entropy_seed++;
 
-        if(keydown(KEY_EXIT) || keydown(KEY_MENU)) {
+        if(keydown(KEY_MENU)) {
             return false;
         }
         if(keydown(KEY_F6)) {
@@ -340,6 +343,46 @@ bool show_splash(const uint16_t *image) {
     }
 }
 
+bool show_controls_selection() {
+    uint16_t *vram = gint_vram;
+    int current = selectedPreset;
+    clearevents();
+    while(1) {
+        const uint16_t *img;
+        if (current == 1) img = preset1;
+        else if (current == 2) img = preset2;
+        else img = preset3;
+
+        for(int i = 0; i < SCREEN_WIDTH * SCREEN_HEIGHT; i++) {
+            vram[i] = img[i];
+        }
+        dupdate();
+
+        while(1) {
+            entropy_seed++;
+            if(keydown(KEY_MENU)) return false;
+            if(keydown(KEY_LEFT)) {
+                current--;
+                if(current < 1) current = 3;
+                while(keydown(KEY_LEFT)) clearevents();
+                break;
+            }
+            if(keydown(KEY_RIGHT)) {
+                current++;
+                if(current > 3) current = 1;
+                while(keydown(KEY_RIGHT)) clearevents();
+                break;
+            }
+            if(keydown(KEY_F6)) {
+                selectedPreset = current;
+                while(keydown(KEY_F6)) clearevents();
+                return true;
+            }
+            clearevents();
+        }
+    }
+}
+
 int main(void) {
     main_menu:
     while(1) {
@@ -347,7 +390,7 @@ int main(void) {
         srand(rtc_ticks());
 
         if (!show_splash(startscreen)) return 0;
-        if (!show_splash(controlsscreen)) return 0;
+        if (!show_controls_selection()) return 0;
 
         // Re-seed using the entropy gathered during the splash screens
         srand(rtc_ticks() ^ entropy_seed);
@@ -520,20 +563,54 @@ int main(void) {
 
                 render();
 
-                if(keydown(KEY_EXIT) || keydown(KEY_MENU)) return 0;
+                if(keydown(KEY_MENU)) return 0;
 
                 float moveStep = 0.25f; // base movement
                 if (playerSlowed) moveStep *= 0.25f; // slow down factor
                 float rotStep = 0.12f; // faster rotation
-                if(keydown(KEY_8)) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] != 1) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] != 1) posY += dirY * moveStep; }
-                if(keydown(KEY_5)) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] != 1) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] != 1) posY -= dirY * moveStep; }
-                if(keydown(KEY_6)) { if(worldMap[(int)(posX + planeX * moveStep)][(int)posY] != 1) posX += planeX * moveStep; if(worldMap[(int)posX][(int)(posY + planeY * moveStep)] != 1) posY += planeY * moveStep; }
-                if(keydown(KEY_4)) { if(worldMap[(int)(posX - planeX * moveStep)][(int)posY] != 1) posX -= planeX * moveStep; if(worldMap[(int)posX][(int)(posY - planeY * moveStep)] != 1) posY -= planeY * moveStep; }
-                if(keydown(KEY_RIGHT)) { float odx = dirX; dirX = dirX * cosf(rotStep) - dirY * sinf(rotStep); dirY = odx * sinf(rotStep) + dirY * cosf(rotStep); float opx = planeX; planeX = planeX * cosf(rotStep) - planeY * sinf(rotStep); planeY = opx * sinf(rotStep) + planeY * cosf(rotStep); }
-                if(keydown(KEY_LEFT)) { float odx = dirX; dirX = dirX * cosf(-rotStep) - dirY * sinf(-rotStep); dirY = odx * sinf(-rotStep) + dirY * cosf(-rotStep); float opx = planeX; planeX = planeX * cosf(-rotStep) - planeY * sinf(-rotStep); planeY = opx * sinf(-rotStep) + planeY * cosf(-rotStep); }
-                if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
-                if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
-                if(keydown(KEY_F6)) {
+
+                bool moveFwd = false, moveBack = false, strafeLeft = false, strafeRight = false;
+                bool rotateLeft = false, rotateRight = false, shoot = false;
+
+                if (selectedPreset == 1) {
+                    moveFwd = keydown(KEY_8);
+                    moveBack = keydown(KEY_5);
+                    strafeLeft = keydown(KEY_4);
+                    strafeRight = keydown(KEY_6);
+                    rotateLeft = keydown(KEY_LEFT);
+                    rotateRight = keydown(KEY_RIGHT);
+                    shoot = keydown(KEY_F6);
+                } else if (selectedPreset == 2) {
+                    moveFwd = keydown(KEY_OPTN);
+                    moveBack = keydown(KEY_X2);
+                    strafeLeft = keydown(KEY_ALPHA);
+                    strafeRight = keydown(KEY_POWER);
+                    rotateLeft = keydown(KEY_LEFT);
+                    rotateRight = keydown(KEY_RIGHT);
+                    shoot = keydown(KEY_F6);
+                } else if (selectedPreset == 3) {
+                    moveFwd = keydown(KEY_UP);
+                    moveBack = keydown(KEY_DOWN);
+                    strafeLeft = keydown(KEY_LEFT);
+                    strafeRight = keydown(KEY_RIGHT);
+                    rotateLeft = keydown(KEY_SHIFT);
+                    rotateRight = keydown(KEY_OPTN);
+                    shoot = keydown(KEY_F1);
+                }
+
+                if(moveFwd) { if(worldMap[(int)(posX + dirX * moveStep)][(int)posY] != 1) posX += dirX * moveStep; if(worldMap[(int)posX][(int)(posY + dirY * moveStep)] != 1) posY += dirY * moveStep; }
+                if(moveBack) { if(worldMap[(int)(posX - dirX * moveStep)][(int)posY] != 1) posX -= dirX * moveStep; if(worldMap[(int)posX][(int)(posY - dirY * moveStep)] != 1) posY -= dirY * moveStep; }
+                if(strafeRight) { if(worldMap[(int)(posX + planeX * moveStep)][(int)posY] != 1) posX += planeX * moveStep; if(worldMap[(int)posX][(int)(posY + planeY * moveStep)] != 1) posY += planeY * moveStep; }
+                if(strafeLeft) { if(worldMap[(int)(posX - planeX * moveStep)][(int)posY] != 1) posX -= planeX * moveStep; if(worldMap[(int)posX][(int)(posY - planeY * moveStep)] != 1) posY -= planeY * moveStep; }
+                if(rotateRight) { float odx = dirX; dirX = dirX * cosf(rotStep) - dirY * sinf(rotStep); dirY = odx * sinf(rotStep) + dirY * cosf(rotStep); float opx = planeX; planeX = planeX * cosf(rotStep) - planeY * sinf(rotStep); planeY = opx * sinf(rotStep) + planeY * cosf(rotStep); }
+                if(rotateLeft) { float odx = dirX; dirX = dirX * cosf(-rotStep) - dirY * sinf(-rotStep); dirY = odx * sinf(-rotStep) + dirY * cosf(-rotStep); float opx = planeX; planeX = planeX * cosf(-rotStep) - planeY * sinf(-rotStep); planeY = opx * sinf(-rotStep) + planeY * cosf(-rotStep); }
+                
+                if (selectedPreset != 3) {
+                    if(keydown(KEY_UP)) { pitch += 5.0f; if (pitch > 110) pitch = 110; }
+                    if(keydown(KEY_DOWN)) { pitch -= 5.0f; if (pitch < -110) pitch = -110; }
+                }
+
+                if(shoot) {
                     if (!bullet.active) {
                         bullet.x = posX + dirX * 0.2f; bullet.y = posY + dirY * 0.2f;
                         bullet.dx = dirX; bullet.dy = dirY; bullet.active = true;
